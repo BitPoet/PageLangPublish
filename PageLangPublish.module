@@ -22,7 +22,7 @@ class PageLangPublish extends Process implements Module {
 	public static function getModuleInfo() {
 		return array(
 			'title' => __('PageLangPublish'),
-			'version' => 106,
+			'version' => 1,
 			'summary' => __('Adds a Publish/Unpublish link to the page list and stores status in a multi-lang field.'),
 			'permission' => 'page-edit',
 			'autoload' => true,
