@@ -1,0 +1,333 @@
+<?php
+
+/**
+ * PageLangPublish allows to publish pages per language and adds
+ * flags and publish/unpublish buttons to the page tree.
+ *
+ * Needs LanguageSupport.
+ *
+ * By Chr. Winter <the.bitpoet@gmail.com>
+ *
+ * ProcessWire 2.x
+ * Copyright (C) 2011 by Ryan Cramer
+ * Licensed under GNU/GPL v2, see LICENSE.TXT
+ *
+ * http://www.processwire.com
+ * http://www.ryancramer.com
+ *
+ */
+
+class PageLangPublish extends Process implements Module {
+
+	public static function getModuleInfo() {
+		return array(
+			'title' => __('PageLangPublish'),
+			'version' => 106,
+			'summary' => __('Adds a Publish/Unpublish link to the page list and stores status in a multi-lang field.'),
+			'permission' => 'page-edit',
+			'autoload' => true,
+			'singular' => true,
+			'requires' => array(
+				'LanguageSupport'
+			)
+		);
+	}
+
+
+	/**
+	 * Populate default configuration (will be overwritten after constructor with user's own configuration)
+	 *
+	 */
+	 /*
+	public function __construct() {
+	}
+	*/
+
+	/**
+	* Initializing the module and adding hooks
+	*
+	*/
+	public function init() {
+		//  add the hooks
+		$this->addHookAfter("ProcessPageListRender::getPageActions", $this, 'hookPageListActions');
+		$this->addHookAfter("ProcessPageListRender::getPageLabel", $this, 'hookPageLabel');
+		$this->addHook('Page::isLanguageViewable', $this, 'isLanguageViewable');
+		$this->addHookBefore('Page::render', $this, 'hookBeforePageRender');
+	}
+
+	public function hookBeforePageRender(HookEvent $event)
+	{
+		$page = $event->object;
+		$user = wire('users')->getCurrentUser();
+		$lang = $user->language;
+		
+		if( ! $page->isLanguageViewable($lang) )
+		{
+			$homepage = $page->rootParent;
+
+			$event->replace = true;
+			wire('session')->redirect($homepage->url);
+		}
+	}
+	
+	/**
+	* Check viewable status also by checking if the page has been published in the current language
+	*/
+	public function ___isLanguageViewable(HookEvent $event)
+	{
+		$page = $event->object;
+		$language = $event->arguments(0);
+		$user = wire('users')->getCurrentUser();
+		
+		if( ! is_object($language) )
+			$language = wire('languages')->get($language);
+		
+		if( $user->isSuperuser() || $user->hasPagePermission('page-edit', $page) )
+		{
+			$event->return = true;
+			return;
+		}
+		
+		if( ! ($page->is('hidden') || $page->is('locked') || ! $page->is('published')) )
+		{
+			$event->return = false;
+			return;
+		}
+
+		$viewable = ($page == wire('pages')->get('/') || $page->getUnformatted("isLangPublished")->getLanguageValue($language) == "1") ? true : false;
+		
+		/* User is not editor, see if page language has been published yet */
+		$event->return = $viewable;
+	}
+
+	/**
+	* Add publish/unpublish buttons for each language to page list buttons
+	*
+	*/
+	public function hookPageListActions(HookEvent $event) {
+		$page = $event->arguments[0];
+
+		if( $page == wire('pages')->get('/') )
+			return;
+		
+		if( wire('users')->getCurrentUser()->hasPagePermission('page-edit') && $page->rootParent->id != wire('config')->adminRootPageID) {
+
+			$pubfield = $page->getUnformatted('isLangPublished');
+		
+			$actions = $event->return;
+
+			if( $pubfield )
+			{
+				foreach( wire('languages') AS $language )
+				{
+					if( true )
+					{
+						$pubstatus = $pubfield->getLanguageValue($language);
+						$newstatus = ("1" == (string)$pubstatus ) ? "0" : "1";
+						$labeltext = ("1" == (string)$pubstatus ) ? _("Unpublish") : _("Publish");
+						$langtitle = $language->title;
+						$new_action = array(
+							'cn' => 'langpublish',
+							'name' => "$labeltext {$langtitle}",
+							'url' => $this->config->urls->admin . "page/langpublish/?id={$page->id}&language={$language->id}&newstatus={$newstatus}"
+						);
+
+						$actions[] = $new_action;
+					}
+				}
+			}
+			
+			$event->return = $actions;
+		}
+	}
+
+	/**
+	* Add icons that show the published/unpublished status for each language
+	* next to the page title in the page list
+	*/
+	public function hookPageLabel(HookEvent $event)
+	{
+		$page = $event->arguments[0];
+		
+		if( $page->rootParent->id == wire('config')->adminRootPageID )
+			return;
+		
+		$append = "";
+		
+		$pubfld = $page->getUnformatted("isLangPublished");
+		
+		foreach( wire('languages') as $language )
+		{
+			$langpage = wire('pages')->get("parent.title=languages,title=" . $language->title);
+		
+			$icon = null;
+			if( $pubfld )
+			{
+				$stats = $pubfld->getLanguageValue($language->id);
+			}
+			else
+			{
+				$stats = "";
+			}
+			if( $stats == "1" || $page == wire('pages')->get('/') )
+			{
+				$icon = $langpage->getUnformatted("iconLanguagePublished")->first();
+			} else {
+				$icon = $langpage->getUnformatted("iconLanguageUnpublished")->first();
+			}
+			if( $icon )
+			{
+				$icon = $icon->url();
+				$append .= "<img style='margin-left: 5px; display: inline;' src='{$icon}'>";
+			}
+		}
+		
+		$event->return = str_replace('</span>', $append . '</span>', $event->return);
+	}
+	
+	/**
+	* Execute function (publishes or unpublishes the page language, then redirects to the page list)
+	*
+	*/
+	public function ___execute() {
+		$pageid = (int) $this->input->get->id;
+		$page = $this->pages->get($pageid);
+
+		$langid = $this->pages->get((int) $this->input->get->language);
+		$pubval = $this->input->get('newstatus');
+
+		if(wire('users')->getCurrentUser()->hasPagePermission('page-edit') != true)
+			throw new WirePermissionException($this->_("You don't have access to publish/unpublish that page."));
+
+		$page->of(false);
+
+		$fld = $page->fields->get('isLangPublished');
+		$lngfld = $page->getUnformatted("isLangPublished");
+		$oldval = $lngfld->getLanguageValue($langid);
+		
+		$lngfld->setLanguageValue($langid, (string)$pubval);
+		
+		if( "1" == (string)$pubval )
+		{
+			/* If a language is published, make sure that the page itself is also published! */
+			if( $page->is("unpublished") )
+			{
+				$page->removeStatus("unpublished");
+			}
+		}
+		
+		$fld->save();
+		
+		$page->save();
+		
+		$page->of(true);
+
+		$this->session->redirect("../?open={$page->id}");
+	}
+
+
+
+	/**
+	* Install
+	*
+	*/
+	public function ___install() {
+
+		if(ProcessWire::versionMajor == 2 && ProcessWire::versionMinor < 2) {
+			throw new WireException($this->_("This module requires ProcessWire 2.2 or newer"));
+		}
+
+		$parent = $this->pages->get("name=page,parent=".$this->config->adminRootPageID);
+
+		// create "isLangPublished" field
+		$field = new Field();
+		$field->setFieldType('FieldtypeTextLanguage');
+		$field->setName('isLangPublished');
+		$field->set('flags', Field::flagAutojoin | Field::flagGlobal | Field::flagPermanent);
+		$field->set('collapsed', 4);
+		$field->set('langBlankInherit', 1);
+		$field->save();
+		
+		// create "langpublish" page
+		$page = new Page();
+		$page->parent = $parent;
+		$page->template = $this->templates->get('admin');
+		$page->name = "langpublish";
+		$page->title = "Publish/Unpublish Page";
+		$page->process = $this;
+		$page->status = Page::statusHidden;
+		$page->sort = $parent->numChildren;
+		$page->save();
+
+		// Add icon fields for published and unpublished status to language template
+		$langtpl = wire('templates')->get('language');
+		
+		$iconLangUnp = new Field();
+		$iconLangUnp->setFieldType('FieldtypeImage');
+		$iconLangUnp->setName('iconLanguageUnpublished');
+		$iconLangUnp->label = _("Icon for unpublished language");
+		$iconLangUnp->set('flags', Field::flagPermanent);
+		$iconLangUnp->extensions = "gif png";
+		$iconLangUnp->maxFiles = 1;
+		$iconLangUnp->outputFormat = FieldtypeFile::outputFormatAuto;
+		$iconLangUnp->collapsed = Inputfield::collapsedNo;
+		$iconLangUnp->save();
+		
+		$langtpl->fields->add($iconLangUnp);
+		$langtpl->fields->save($iconLangUnp);
+		$langtpl->save();
+		
+		$iconLangPub = new Field();
+		$iconLangPub->setFieldType('FieldtypeImage');
+		$iconLangPub->setName('iconLanguagePublished');
+		$iconLangPub->label = _("Icon for published language");
+		$iconLangPub->set('flags', Field::flagPermanent);
+		$iconLangPub->extensions = "gif png";
+		$iconLangPub->maxFiles = 1;
+		$iconLangPub->outputFormat = FieldtypeFile::outputFormatAuto;
+		$iconLangPub->collapsed = Inputfield::collapsedNo;
+		$iconLangPub->save();
+		
+		$langtpl->fields->add($iconLangPub);
+		$langtpl->fields->save($iconLangPub);
+		$langtpl->save();
+		
+		// success message
+		$this->message(sprintf($this->_("Installed to %s"), $page->path));
+	}
+
+	/**
+	* Uninstall
+	*
+	*/
+	public function ___uninstall() {
+		$parent = $this->pages->get("name=page,parent=".$this->config->adminRootPageID);
+		$page = $parent->child("name=langpublish,include=hidden");
+
+		$fieldsToRemove = array("isLangPublished", "iconLanguageUnpublished", "iconLanguageUnpublished");
+		
+		foreach( $fieldsToRemove AS $fieldname )
+		{
+			$field = wire('fields')->get($fieldname);
+			foreach( $field->getTemplates() as $tpl )
+			{
+				if( $tpl->fields->hasField($fieldname) )
+				{
+					$tpl->fields->remove($field);
+					$tpl->fields->save();
+					$tpl->save();
+					$this->message(sprintf($this->_("Removed field %s from template %s"), $fieldname, $tpl->name));
+				}
+			}
+			wire("fields")->delete($field);
+		}
+		
+		if($page->id) {
+			$this->message(sprintf($this->_("Removed %s"), $page->path));
+			$this->pages->delete($page);
+		}
+	}
+
+}
+
+?>
