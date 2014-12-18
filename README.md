@@ -1,8 +1,8 @@
 #PageLangPublish
 
-**_This module is still in alpha stage_**
+##A ProcessWire module that allows publishing pages per language.
 
-A ProcessWire module that allows publishing pages per language.
+**_This module is still in alpha stage!_**
 
 If a page isn't available in the requested language, a redirect
 to the next available parent will be performed.
