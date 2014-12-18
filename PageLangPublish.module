@@ -22,7 +22,7 @@ class PageLangPublish extends Process implements Module {
 	public static function getModuleInfo() {
 		return array(
 			'title' => __('PageLangPublish'),
-			'version' => 1,
+			'version' => 2,
 			'summary' => __('Adds a Publish/Unpublish link to the page list and stores status in a multi-lang field.'),
 			'permission' => 'page-edit',
 			'autoload' => true,
@@ -63,10 +63,15 @@ class PageLangPublish extends Process implements Module {
 		
 		if( ! $page->isLanguageViewable($lang) )
 		{
-			$homepage = $page->rootParent;
+			$redirpage = $page->parent;
+			
+			while( ! $redirpage->isLanguageViewable($lang) )
+			{
+				$redirpage = $redirpage->parent;
+			}
 
 			$event->replace = true;
-			wire('session')->redirect($homepage->url);
+			wire('session')->redirect($redirpage->url);
 		}
 	}
 	
