@@ -12,3 +12,7 @@ the icons are added to the language pages at install time.
 
 If a page isn't available in the requested language, a redirect
 to the next available parent will be performed.
+
+##ToDo
+
+- Tie module behavior into languages' active status
